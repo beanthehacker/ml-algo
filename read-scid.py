@@ -48,8 +48,8 @@ def get_scid_df(filename, limitsize=sys.maxsize):
     df.index = df.index.tz_convert('America/Chicago')
     return df
 
-df = get_scid_df('D:\\SierraChart\\SierraChart\\Data\\F.US.EPH23.scid', 100000000)
-df['PriceAction'] = "Neutral"
+df = get_scid_df('D:\\SierraChart\\SierraChart\\Data\\F.US.EPH23.scid', 400000000)
+# df['PriceAction'] = "Neutral"
 print(df)
 
 
@@ -68,75 +68,72 @@ df_1sec = (
             "AskVolume": "sum",
         }
     )
-    .ffill()
+    # .ffill()
 )
-print(df_1sec)
+# print(df_1sec)
 
 # Filter the DataFrame based on time and "BidVolume"
 # don't process first 4 mins and last 11 mins of RTH
 df_BV500 = df_1sec[
     (df_1sec.index.time >= pd.Timestamp("08:34").time()) & 
     (df_1sec.index.time <= pd.Timestamp("14:49").time()) & 
-    (df_1sec["BidVolume"] > 450) &
-    (df_1sec["AskVolume"] < 450)
+    (df_1sec["BidVolume"] > 500) &
+    (df_1sec["AskVolume"] < 500)
 ]
 
 print(df_BV500)
 
 
-relevant_data_points = []
+LfgDataPoints = pd.DataFrame(columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'Trades', 'BidVolume', 'AskVolume'])
 
 for i in range(len(df_BV500)):
-    time = df_BV500.index[i]
-    # get 5 seconds of data after the current time excluding the second in which BV was >500
-    end_time = time + pd.Timedelta(seconds=5)
-    filtered_rows_BV = df_1sec.loc[time:end_time][1:]
-    filtered_rows_AV = df_1sec.loc[time:end_time]
+    # the second at which the order book flush/swipe happens
+    flushTime = df_BV500.index[i]
+    # get 7 seconds of data AFTER the flushTime's second i.e. excluding the second in which flush happened
+    # alos called as reversal time
+    reversalStartTime = flushTime + pd.Timedelta(seconds=1)
+    reversalEndTime = flushTime + pd.Timedelta(seconds=7)
+    reversalDataRows = df_1sec.loc[reversalStartTime:reversalEndTime]
 
     # combine all the rows into one
-    merged_row_BV = pd.Series({
-        "Time": filtered_rows_BV.index[0],
-        "Open": filtered_rows_BV.iloc[0]["Open"],
-        "High": filtered_rows_BV["High"].max(),
-        "Low": filtered_rows_BV["Low"].min(),
-        "Close": filtered_rows_BV.iloc[-1]["Close"],
-        "Volume": filtered_rows_BV["Volume"].sum(),
-        "Trades": filtered_rows_BV["Trades"].sum(),
-        "BidVolume": filtered_rows_BV["BidVolume"].sum(),
-        "AskVolume": filtered_rows_BV["AskVolume"].sum(),
+    binnedReversalData = pd.Series({
+        "Time": reversalDataRows.index[0],
+        "Open": reversalDataRows.iloc[0]["Open"],
+        "High": reversalDataRows["High"].max(),
+        "Low": reversalDataRows["Low"].min(),
+        "Close": reversalDataRows.iloc[-1]["Close"],
+        "Volume": reversalDataRows["Volume"].sum(),
+        "Trades": reversalDataRows["Trades"].sum(),
+        "BidVolume": reversalDataRows["BidVolume"].sum(),
+        "AskVolume": reversalDataRows["AskVolume"].sum(),
     })
 
-    merged_row_AV = pd.Series({
-        "Time": filtered_rows_AV.index[0],
-        "Open": filtered_rows_AV.iloc[0]["Open"],
-        "High": filtered_rows_AV["High"].max(),
-        "Low": filtered_rows_AV["Low"].min(),
-        "Close": filtered_rows_AV.iloc[-1]["Close"],
-        "Volume": filtered_rows_AV["Volume"].sum(),
-        "Trades": filtered_rows_AV["Trades"].sum(),
-        "BidVolume": filtered_rows_AV["BidVolume"].sum(),
-        "AskVolume": filtered_rows_AV["AskVolume"].sum(),
-    })
+    # merged_row_AV = pd.Series({
+    #     "Time": filtered_rows_AV.index[0],
+    #     "Open": filtered_rows_AV.iloc[0]["Open"],
+    #     "High": filtered_rows_AV["High"].max(),
+    #     "Low": filtered_rows_AV["Low"].min(),
+    #     "Close": filtered_rows_AV.iloc[-1]["Close"],
+    #     "Volume": filtered_rows_AV["Volume"].sum(),
+    #     "Trades": filtered_rows_AV["Trades"].sum(),
+    #     "BidVolume": filtered_rows_AV["BidVolume"].sum(),
+    #     "AskVolume": filtered_rows_AV["AskVolume"].sum(),
+    # })
 
+    binnedReversalData["Delta"] = binnedReversalData["AskVolume"] - binnedReversalData["BidVolume"]
 
 
     # add the merged row to the merged_data DataFrame
     # with condition that BidVolume dies down and AskVolume starts coming in
-    if merged_row_AV["AskVolume"] > 400 & merged_row_BV["BidVolume"] < 500:
-        # extract datetime from Timestamp('2023-02-16 08:34:51-0600', tz='America/Chicago')
-        date_time_only = str(time)[:-6]
-        relevant_data_points.append(date_time_only)
+    if binnedReversalData["AskVolume"] > 500 and binnedReversalData["BidVolume"] < 500:
+        LfgDataPoints = LfgDataPoints.append(binnedReversalData, ignore_index=True)
 
 # print the merged data
-print(relevant_data_points)
+print(LfgDataPoints)
 
 
-# To print relevant_data_points list to a CSV file with each entry on a new line:
-import csv
-with open('output.csv', 'w', newline='') as file:
-    writer = csv.writer(file)
-    for item in relevant_data_points:
-        writer.writerow([item])
+# Write the DataFrame to the output file, with each row on a new line
+LfgDataPoints.to_csv("On21feb2023-For21Feb2023-1tick-v1.csv", index=False, header=False, lineterminator='\n')
 
 
 
@@ -151,79 +148,77 @@ with open('output.csv', 'w', newline='') as file:
 
 
 
+# df_5sec = (
+#     df.resample("5S")
+#     .agg(
+#         {
+#             "Open": "first",
+#             "High": "max",
+#             "Low": "min",
+#             "Close": "last",
+#             "Volume": "sum",
+#             "Trades": "sum",
+#             "BidVolume": "sum",
+#             "AskVolume": "sum",
+#         }
+#     )
+#     .ffill()
+# )
 
+# #### AZURE anomaly detector code begin ####
+# import requests
 
-df_5sec = (
-    df.resample("5S")
-    .agg(
-        {
-            "Open": "first",
-            "High": "max",
-            "Low": "min",
-            "Close": "last",
-            "Volume": "sum",
-            "Trades": "sum",
-            "BidVolume": "sum",
-            "AskVolume": "sum",
-        }
-    )
-    .ffill()
-)
+# ENDPOINT = "https://lg-test-8feb2023.cognitiveservices.azure.com/anomalydetector/v1.1-preview.1"
+# HEADERS = {
+#     "Ocp-Apim-Subscription-Key": "84d38f5a85654c9eb31afee50efe07e2"
+# }
 
-#### AZURE anomaly detector code begin ####
-import requests
+# API_MODEL = "{endpoint}/multivariate/models"
+# API_MODEL_STATUS = "{endpoint}/multivariate/models/{model_id}"
+# API_MODEL_INFERENCE = "{endpoint}/multivariate/models/{model_id}/detect"
+# API_MODEL_LAST_INFERENCE = "{endpoint}/multivariate/models/{model_id}/last/detect"
+# API_RESULTS = "{endpoint}/multivariate/results/{result_id}"
+# API_DELETE = "{endpoint}/multivariate/models/{model_id}"
+# SOURCE_BLOB_SAS = "[The SAS URL token that generated from your dataset in Azure Storage Account.]"
 
-ENDPOINT = "https://lg-test-8feb2023.cognitiveservices.azure.com/anomalydetector/v1.1-preview.1"
-HEADERS = {
-    "Ocp-Apim-Subscription-Key": "84d38f5a85654c9eb31afee50efe07e2"
-}
+# res = requests.get(API_MODEL.format(endpoint=ENDPOINT), headers=HEADERS)
+# assert res.status_code == 200, f"Error occured. Error message: {res.content}"
+# print(res.content)
 
-API_MODEL = "{endpoint}/multivariate/models"
-API_MODEL_STATUS = "{endpoint}/multivariate/models/{model_id}"
-API_MODEL_INFERENCE = "{endpoint}/multivariate/models/{model_id}/detect"
-API_MODEL_LAST_INFERENCE = "{endpoint}/multivariate/models/{model_id}/last/detect"
-API_RESULTS = "{endpoint}/multivariate/results/{result_id}"
-API_DELETE = "{endpoint}/multivariate/models/{model_id}"
-SOURCE_BLOB_SAS = "[The SAS URL token that generated from your dataset in Azure Storage Account.]"
+# #### AZURE anomaly detector code end ####
 
-res = requests.get(API_MODEL.format(endpoint=ENDPOINT), headers=HEADERS)
-assert res.status_code == 200, f"Error occured. Error message: {res.content}"
-print(res.content)
+# time_series_data = df_1sec.to_dict('records')
 
-#### AZURE anomaly detector code end ####
-
-time_series_data = df_1sec.to_dict('records')
-
-request_data = {"series": time_series_data, "granularity": "seconds"}
-response = requests.post(endpoint, headers=headers, json=request_data)
+# request_data = {"series": time_series_data, "granularity": "seconds"}
+# response = requests.post(endpoint, headers=headers, json=request_data)
 
 
 
 
-##### Read the CSV file that has training data from OFL Bot: Begin #####
-# Assuming that the CSV file time_intervals.csv has the following format:
-# start_time,end_time,PriceAction
-# 2023-02-02 08:00:00,2023-02-02 08:30:00,Bullish
-# 2023-02-02 08:30:00,2023-02-02 09:00:00,Bearish
-# 2023-02-02 09:00:00,2023-02-02 09:30:00,Bullish
-df_time_intervals = pd.read_csv("time_intervals.csv")
-start_time_list = df_time_intervals['start_time'].tolist()
-end_time_list = df_time_intervals['end_time'].tolist()
+# ##### Read the CSV file that has training data from OFL Bot: Begin #####
+# # Assuming that the CSV file time_intervals.csv has the following format:
+# # start_time,end_time,PriceAction
+# # 2023-02-02 08:00:00,2023-02-02 08:30:00,Bullish
+# # 2023-02-02 08:30:00,2023-02-02 09:00:00,Bearish
+# # 2023-02-02 09:00:00,2023-02-02 09:30:00,Bullish
+# df_time_intervals = pd.read_csv("time_intervals.csv")
+# start_time_list = df_time_intervals['start_time'].tolist()
+# end_time_list = df_time_intervals['end_time'].tolist()
 
-# Create a list of tuples that represents the time intervals in the CSV
-time_intervals = list(zip(start_time_list, end_time_list))
+# # Create a list of tuples that represents the time intervals in the CSV
+# time_intervals = list(zip(start_time_list, end_time_list))
 
-# Convert the time intervals in the dataframe to datetime
-df_1sec.index = pd.to_datetime(df_1sec.index)
+# # Convert the time intervals in the dataframe to datetime
+# df_1sec.index = pd.to_datetime(df_1sec.index)
 
-# Loop through the time intervals in the CSV
-for interval in time_intervals:
-    start, end = interval
-    mask = (df_1sec.index >= start) & (df_1sec.index < end)
-    df_1sec.loc[mask, 'PriceAction'] = df_time_intervals[(df_time_intervals['start_time'] == start) & 
-                                                     (df_time_intervals['end_time'] == end)]['PriceAction'].values[0]
+# # Loop through the time intervals in the CSV
+# for interval in time_intervals:
+#     start, end = interval
+#     mask = (df_1sec.index >= start) & (df_1sec.index < end)
+#     df_1sec.loc[mask, 'PriceAction'] = df_time_intervals[(df_time_intervals['start_time'] == start) & 
+#                                                      (df_time_intervals['end_time'] == end)]['PriceAction'].values[0]
 
-mask = (df.index >= "2023-02-02 08:44:06") & (df.index < "2023-02-02 08:48:55")
-df.loc[mask].to_csv("output3.csv")
+# mask = (df.index >= "2023-02-02 08:44:06") & (df.index < "2023-02-02 08:48:55")
+# df.loc[mask].to_csv("output3.csv")
 
-##### Read the CSV file that has training data from OFL Bot: End #####
+# ##### Read the CSV file that has training data from OFL Bot: End #####
